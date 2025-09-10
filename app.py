@@ -11,6 +11,7 @@ def home():
     server_ip = socket.gethostbyname(socket.gethostname())
 
     return {
+        "hello_world": "Hello World!",
         "server_time": server_time,
         "client_ip": client_ip,
         "server_ip": server_ip
@@ -18,3 +19,4 @@ def home():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3000)
+
