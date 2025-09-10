@@ -1,0 +1,132 @@
+name: Publicação automática
+on:  
+  # nosso script será executado sempre quando houver push e pull request nas branches destacadas abaixo
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+jobs:name: Publicação automática
+on:  
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Cria um arquivo temporário para a chave privada
+        run: |
+          echo "${{ secrets.KEY }}" > /tmp/private_key
+          chmod 600 /tmp/private_key
+
+      - name: Criando pasta da aplicação se não existir
+        run: |
+          ssh -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ secrets.HOST }} \
+          "sudo mkdir -p /home/ubuntu/app /home/ubuntu/backups"
+
+      - name: Ajustar permissões no servidor de Produção
+        run: |
+          ssh -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ secrets.HOST }} \
+          "sudo chown -R ubuntu:ubuntu /home/ubuntu/app /home/ubuntu/backups && sudo chmod -R 755 /home/ubuntu/app /home/ubuntu/backups"
+
+      - name: Backup da aplicação atual
+        run: |
+          ssh -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ secrets.HOST }} "\
+            if [ -d /home/ubuntu/app ]; then \
+              timestamp=\$(date +'%Y%m%d_%H%M%S'); \
+              tar -czf /home/ubuntu/backups/app_\$timestamp.tar.gz -C /home/ubuntu app; \
+            fi \
+          "
+
+      - name: Transferindo os arquivos da aplicação
+        run: |
+          scp -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -r ${{ github.workspace }}/* ubuntu@${{ secrets.HOST }}:/home/ubuntu/app
+
+      - name: Instalando dependências Python no servidor
+        run: |
+          ssh -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ secrets.HOST }} "\
+            cd /home/ubuntu/app && \
+            python3 -m venv venv && \
+            source venv/bin/activate && \
+            pip install --upgrade pip && \
+            pip install -r requirements.txt \
+          "
+
+      - name: Reiniciando o serviço da aplicação
+        run: |
+          ssh -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ secrets.HOST }} \
+          sudo systemctl restart appdemo1.service
+
+      - name: Limpa o arquivo de chave privada após uso
+        run: |
+          rm /tmp/private_key
+
+      - name: Notificação de Sucesso no Discord
+        if: success()
+        run: |
+          curl -H "Content-Type: application/json" \
+               -X POST \
+               -d "{\"content\":\":white_check_mark: Deploy realizado com sucesso no servidor **${{ secrets.HOST }}**!\"}" \
+               ${{ secrets.DISCORD_WEBHOOK }}
+
+      - name: Notificação de Erro no Discord
+        if: failure()
+        run: |
+          curl -H "Content-Type: application/json" \
+               -X POST \
+               -d "{\"content\":\":x: O deploy falhou no servidor **${{ secrets.HOST }}**! Verifique os logs no GitHub Actions.\"}" \
+               ${{ secrets.DISCORD_WEBHOOK }}
+
+  build:
+    # sistema operacional da máquina que o Github irá disponibilizar para rodar o nosso script
+    runs-on: ubuntu-latest
+ 
+    # aqui é iniciado o passo a passo para realizar o processo de publicação
+    steps:
+      - uses: actions/checkout@v3
+ 
+      - name: Cria um arquivo temporário para a chave privada e altera a permissão do arquivo para que só o dono possa ler e escrever (necessário para chaves)
+        run: |
+               echo "${{ secrets.KEY }}" > /tmp/private_key
+               chmod 600 /tmp/private_key
+ 
+      - name: Criando a pasta da aplicação e acertando diretório... 
+        # StrictHostKeyChecking: desativar prompt 'fingerprint'
+        # UserKnownHostsFile: para não salvar a chave
+        run: |
+               ssh -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ secrets.HOST }} \
+               sudo mkdir -p /home/ubuntu/app
+ 
+      - name: Ajustar permissões no servidor de Produção
+        run: |
+          ssh -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ secrets.HOST }} "sudo chown -R ubuntu:ubuntu /home/ubuntu/app && sudo chmod -R 755 /home/ubuntu/app"
+                      
+      - name: Transferindo os arquivos da aplicação
+        run: |
+               scp -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -r ${{ github.workspace }}/* ubuntu@${{ secrets.HOST }}:/home/ubuntu/app
+ 
+      - name: Restaurando a aplicação
+        run: |
+               ssh -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ secrets.HOST }} \
+               sudo npm install --prefix /home/ubuntu/app \
+ 
+      - name: Reiniciando o serviço da aplicação
+        run: |
+               ssh -i /tmp/private_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ secrets.HOST }} \
+               sudo systemctl restart appdemo1.service              
+ 
+      - name: Limpa o arquivo de chave privada após uso
+        run: |
+           rm /tmp/private_key
+ 
+ 
+      - name: Notificar pelo Slack
+        run: |
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"Deploy realizado com sucesso!"}' \
+              ${{ secrets.SLACK }} 
